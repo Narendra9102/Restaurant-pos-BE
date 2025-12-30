@@ -113,17 +113,16 @@ python manage.py migrate
 
 ### 7️. Seed Sample Data
 
-To create demo users, tables, and menu items:
+To create tables, and menu items:
 
 ```bash
-python manage.py seed_data
+python manage.py shell
+>>> exec(open("restaurant/seed_data.py").read())
 ```
 
 This will create:
 
-* Sample users for each role
-* 5 tables
-* Sample menu items
+* Tables + Menu inserted into their database
 
 ---
 
