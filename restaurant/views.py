@@ -506,9 +506,7 @@ def get_table_orders(request, table_id):
 @permission_classes([IsAuthenticated])
 def generate_bill(request):
     """
-    Generate bill for a table
-    Requirement: Generate bill, show items, quantities, total, taxes
-    Access: Cashier only
+    ✅ FIXED - Generate bill for a table (only unbilled served orders)
     """
     try:
         if request.user.profile.role_id != 4:
@@ -527,12 +525,15 @@ def generate_bill(request):
         
         table = Table.objects.get(id=table_id)
         
-        # Check if table has orders
-        orders = table.orders.filter(status='Served')
-        if not orders.exists():
+        # ✅ FIXED - Check for UNBILLED served orders only
+        unbilled_orders = list(
+            table.orders.filter(status='Served', is_billed=False)
+        )
+        
+        if not unbilled_orders:
             return Response({
                 'success': False,
-                'message': 'No served orders found for this table'
+                'message': 'No unbilled served orders found for this table'
             }, status=400)
         
         # Create bill
@@ -542,12 +543,19 @@ def generate_bill(request):
             status='Pending Payment'
         )
         
-        # Calculate bill
-        bill.calculate_bill()
+        # ✅ Calculate bill (this will mark orders as billed)
+        total = bill.calculate_bill()
+        
+        if total == Decimal('0.00'):
+            bill.delete()
+            return Response({
+                'success': False,
+                'message': 'No items to bill'
+            }, status=400)
         
         # Get all items for response
         items_data = []
-        for order in orders:
+        for order in unbilled_orders:
             for item in order.order_items.all():
                 items_data.append({
                     'name': item.menu_item.name,
@@ -579,9 +587,162 @@ def generate_bill(request):
     except Exception as e:
         return Response({
             'success': False,
+            'message': f'Error: {str(e)}'
+        }, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_tables_ready_for_bill(request):
+    """
+    ✅ FIXED - Get tables that have UNBILLED served orders
+    """
+    try:
+        if request.user.profile.role_id != 4:
+            return Response({
+                'success': False,
+                'message': 'Only Cashier can view this'
+            }, status=403)
+        
+        tables_with_unbilled_orders = []
+        
+        # Get all tables with served but unbilled orders
+        for table in Table.objects.all():
+            # ✅ FIXED - Check for unbilled served orders
+            unbilled_served_orders = table.orders.filter(status='Served', is_billed=False)
+            
+            if unbilled_served_orders.exists():
+                # Calculate total from unbilled orders
+                total = sum(order.total_amount for order in unbilled_served_orders)
+                
+                tables_with_unbilled_orders.append({
+                    'table_id': table.id,
+                    'table_number': table.table_number,
+                    'seating_capacity': table.seating_capacity,
+                    'status': table.status,
+                    'total_amount': str(total),
+                    'orders_count': unbilled_served_orders.count()
+                })
+        
+        return Response({
+            'success': True,
+            'data': tables_with_unbilled_orders
+        })
+        
+    except Exception as e:
+        return Response({
+            'success': False,
             'message': str(e)
         }, status=500)
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_bill_details(request, bill_id):
+    """
+    Get details of a specific bill
+    Access: Cashier only
+    """
+    try:
+        if request.user.profile.role_id != 4:
+            return Response({
+                'success': False,
+                'message': 'Only Cashier can view bills'
+            }, status=403)
+        
+        bill = Bill.objects.get(id=bill_id)
+        
+        # Get all items from the bill's orders
+        items_data = []
+        orders = bill.orders.all()
+
+        for order in orders:
+            for item in order.order_items.all():
+                items_data.append({
+                    'name': item.menu_item.name,
+                    'quantity': item.quantity,
+                    'price': str(item.price_at_order),
+                    'subtotal': str(item.subtotal)
+                })
+        
+        return Response({
+            'success': True,
+            'data': {
+                'bill_id': bill.id,
+                'table': bill.table.table_number,
+                'items': items_data,
+                'subtotal': str(bill.subtotal),
+                'tax_percentage': str(bill.tax_percentage),
+                'tax_amount': str(bill.tax_amount),
+                'total_amount': str(bill.total_amount),
+                'status': bill.status,
+                'generated_at': bill.generated_at
+            }
+        })
+        
+    except Bill.DoesNotExist:
+        return Response({
+            'success': False,
+            'message': 'Bill not found'
+        }, status=404)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'message': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_cashier_stats(request):
+    """
+    Get cashier dashboard statistics
+    Access: Cashier only
+    """
+    try:
+        if request.user.profile.role_id != 4:
+            return Response({
+                'success': False,
+                'message': 'Only Cashier can view stats'
+            }, status=403)
+        
+        from django.utils import timezone
+        from datetime import datetime
+        
+        # Get today's date range
+        today = timezone.now().date()
+        today_start = datetime.combine(today, datetime.min.time())
+        today_end = datetime.combine(today, datetime.max.time())
+        
+        # Get all bills for today
+        today_bills = Bill.objects.filter(
+            generated_at__range=(today_start, today_end)
+        )
+        
+        # Calculate stats
+        pending_bills = today_bills.filter(status='Pending Payment')
+        paid_bills = today_bills.filter(status='Paid')
+        
+        # Calculate today's revenue (only paid bills)
+        today_revenue = sum(
+            Decimal(bill.total_amount) 
+            for bill in paid_bills
+        )
+        
+        return Response({
+            'success': True,
+            'data': {
+                'today_revenue': str(today_revenue),
+                'bills_pending': pending_bills.count(),
+                'bills_paid': paid_bills.count(),
+                'total_bills': today_bills.count()
+            }
+        })
+        
+    except Exception as e:
+        return Response({
+            'success': False,
+            'message': str(e)
+        }, status=500)
+    
 
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
@@ -666,4 +827,4 @@ def get_pending_bills(request):
             'message': str(e)
         }, status=500)
     
-    
+

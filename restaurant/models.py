@@ -70,9 +70,17 @@ class Order(models.Model):
     ]
     
     table = models.ForeignKey(Table, on_delete=models.CASCADE, related_name='orders')
+    bill = models.ForeignKey(
+        'Bill',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='orders'
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Placed')
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='orders_created')
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_billed = models.BooleanField(default=False) 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -99,7 +107,7 @@ class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='order_items')
     menu_item = models.ForeignKey(MenuItem, on_delete=models.CASCADE)
     quantity = models.IntegerField(validators=[MinValueValidator(1)])
-    price_at_order = models.DecimalField(max_digits=10, decimal_places=2)  # Store price at time of order
+    price_at_order = models.DecimalField(max_digits=10, decimal_places=2)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -130,7 +138,7 @@ class Bill(models.Model):
     
     table = models.ForeignKey(Table, on_delete=models.CASCADE, related_name='bills')
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    tax_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=5.00)  # 5% tax
+    tax_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('5.00'))  # ✅ FIXED - Use Decimal
     tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending Payment')
@@ -147,26 +155,33 @@ class Bill(models.Model):
     
     def calculate_bill(self):
         """
-        Calculate bill from all orders of the table
-        Requirement: Billing (Section 3) - Show items, quantities, total, taxes
+        ✅ FIXED - Calculate bill from unbilled served orders only
         """
-        # Get all orders for this table that are served
-        orders = self.table.orders.filter(status='Served')
+        # Get only UNBILLED orders that are served
+        orders = self.table.orders.filter(status='Served', is_billed=False)
         
-        # Calculate subtotal from all order items
-        self.subtotal = sum(
-            order_item.subtotal 
-            for order in orders 
-            for order_item in order.order_items.all()
-        )
+        if not orders.exists():
+            # No unbilled served orders
+            return Decimal('0.00')
         
-        # Calculate tax
-        self.tax_amount = (self.subtotal * self.tax_percentage) / 100
+        # Calculate subtotal from all order items in unbilled orders
+        self.subtotal = Decimal('0.00')
+        for order in orders:
+            for order_item in order.order_items.all():
+                self.subtotal += order_item.subtotal
+        
+        # ✅ FIXED - Ensure both are Decimal for calculation
+        self.tax_amount = (self.subtotal * self.tax_percentage) / Decimal('100.00')
         
         # Calculate total
         self.total_amount = self.subtotal + self.tax_amount
         
         self.save()
+        
+        # ✅ Mark orders as billed
+        orders.update(
+            is_billed=True,
+            bill=self
+        )
+        
         return self.total_amount
-    
-    

@@ -24,4 +24,7 @@ urlpatterns = [
     path('bills/generate/', views.generate_bill, name='generate_bill'),
     path('bills/mark-paid/<int:bill_id>/', views.mark_bill_paid, name='mark_bill_paid'),
     path('bills/pending/', views.get_pending_bills, name='get_pending_bills'),
+    path('tables/ready-for-bill/', views.get_tables_ready_for_bill, name='get_tables_ready_for_bill'),
+    path('bills/<int:bill_id>/', views.get_bill_details, name='get_bill_details'),
+    path('cashier/stats/', views.get_cashier_stats, name='get_cashier_stats'),
 ]
