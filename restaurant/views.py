@@ -104,26 +104,43 @@ def create_table(request):
 def update_table(request, table_id):
     """
     Update table
-    Access: Manager only
+    Access: Manager (full update) OR Waiter (only "Bill Requested")
     """
     try:
-        if request.user.profile.role_id != 2:
-            return Response({
-                'success': False,
-                'message': 'Only Manager can update tables'
-            }, status=403)
-        
+        role_id = request.user.profile.role_id
         table = Table.objects.get(id=table_id)
         
-        table.table_number = request.data.get('table_number', table.table_number)
-        table.seating_capacity = request.data.get('seating_capacity', table.seating_capacity)
-        table.status = request.data.get('status', table.status)
-        table.save()
+        # Waiter can only change status to "Bill Requested"
+        if role_id == 3:  # Waiter
+            new_status = request.data.get('status')
+            if new_status != 'Bill Requested':
+                return Response({
+                    'success': False,
+                    'message': 'Waiters can only mark tables as Bill Requested'
+                }, status=403)
+            table.status = new_status
+            table.save()
+            return Response({
+                'success': True,
+                'message': 'Bill requested successfully'
+            })
         
-        return Response({
-            'success': True,
-            'message': 'Table updated successfully'
-        })
+        # Manager can update everything
+        elif role_id == 2:  # Manager
+            table.table_number = request.data.get('table_number', table.table_number)
+            table.seating_capacity = request.data.get('seating_capacity', table.seating_capacity)
+            table.status = request.data.get('status', table.status)
+            table.save()
+            return Response({
+                'success': True,
+                'message': 'Table updated successfully'
+            })
+        
+        else:
+            return Response({
+                'success': False,
+                'message': 'Unauthorized'
+            }, status=403)
         
     except Table.DoesNotExist:
         return Response({
@@ -478,6 +495,7 @@ def get_table_orders(request, table_id):
             orders_data.append({
                 'id': order.id,
                 'status': order.status,
+                'is_billed': order.is_billed,
                 'items': items_data,
                 'total_amount': str(order.total_amount),
                 'created_at': order.created_at
@@ -595,7 +613,7 @@ def generate_bill(request):
 @permission_classes([IsAuthenticated])
 def get_tables_ready_for_bill(request):
     """
-    ✅ FIXED - Get tables that have UNBILLED served orders
+    Get tables with status "Bill Requested" OR tables with unbilled served orders
     """
     try:
         if request.user.profile.role_id != 4:
@@ -604,18 +622,36 @@ def get_tables_ready_for_bill(request):
                 'message': 'Only Cashier can view this'
             }, status=403)
         
-        tables_with_unbilled_orders = []
+        tables_ready = []
         
-        # Get all tables with served but unbilled orders
-        for table in Table.objects.all():
-            # ✅ FIXED - Check for unbilled served orders
+        # Priority 1: Tables with "Bill Requested" status
+        bill_requested_tables = Table.objects.filter(status='Bill Requested')
+        
+        for table in bill_requested_tables:
             unbilled_served_orders = table.orders.filter(status='Served', is_billed=False)
             
             if unbilled_served_orders.exists():
-                # Calculate total from unbilled orders
                 total = sum(order.total_amount for order in unbilled_served_orders)
                 
-                tables_with_unbilled_orders.append({
+                tables_ready.append({
+                    'table_id': table.id,
+                    'table_number': table.table_number,
+                    'seating_capacity': table.seating_capacity,
+                    'status': table.status,
+                    'total_amount': str(total),
+                    'orders_count': unbilled_served_orders.count()
+                })
+        
+        # Priority 2: Occupied tables with unbilled served orders (backup)
+        occupied_tables = Table.objects.filter(status='Occupied')
+        
+        for table in occupied_tables:
+            unbilled_served_orders = table.orders.filter(status='Served', is_billed=False)
+            
+            if unbilled_served_orders.exists():
+                total = sum(order.total_amount for order in unbilled_served_orders)
+                
+                tables_ready.append({
                     'table_id': table.id,
                     'table_number': table.table_number,
                     'seating_capacity': table.seating_capacity,
@@ -626,14 +662,14 @@ def get_tables_ready_for_bill(request):
         
         return Response({
             'success': True,
-            'data': tables_with_unbilled_orders
+            'data': tables_ready
         })
         
     except Exception as e:
         return Response({
             'success': False,
             'message': str(e)
-        }, status=500)
+        }, status=500)  
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -828,3 +864,53 @@ def get_pending_bills(request):
         }, status=500)
     
 
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_overdue_bills(request):
+    """
+    Get bills pending for more than 30 minutes
+    Requirement #5: Alert manager
+    """
+    try:
+        if request.user.profile.role_id != 2:  # Manager only
+            return Response({
+                'success': False,
+                'message': 'Manager only'
+            }, status=403)
+        
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Get bills pending for more than 30 minutes
+        threshold = timezone.now() - timedelta(minutes=1)
+        overdue_bills = Bill.objects.filter(
+            status='Pending Payment',
+            generated_at__lt=threshold
+        )
+        
+        bills_data = []
+        for bill in overdue_bills:
+            minutes_pending = (timezone.now() - bill.generated_at).total_seconds() / 60
+            
+            bills_data.append({
+                'id': bill.id,
+                'table': bill.table.table_number,
+                'total_amount': str(bill.total_amount),
+                'minutes_pending': int(minutes_pending),
+                'generated_at': bill.generated_at
+            })
+        
+        return Response({
+            'success': True,
+            'count': len(bills_data),
+            'data': bills_data
+        })
+        
+    except Exception as e:
+        return Response({
+            'success': False,
+            'message': str(e)
+        }, status=500)
+    

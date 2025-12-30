@@ -27,4 +27,6 @@ urlpatterns = [
     path('tables/ready-for-bill/', views.get_tables_ready_for_bill, name='get_tables_ready_for_bill'),
     path('bills/<int:bill_id>/', views.get_bill_details, name='get_bill_details'),
     path('cashier/stats/', views.get_cashier_stats, name='get_cashier_stats'),
+
+    path('bills/overdue/', views.get_overdue_bills, name='get_overdue_bills'),
 ]
