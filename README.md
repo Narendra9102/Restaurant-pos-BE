@@ -121,8 +121,10 @@ Location:
 - seed_data.py (project root)
 
 Run:
+```bash
 python manage.py shell
 >>> exec(open("seed_data.py").read())
+```
 
 Note:
 User accounts are NOT seeded.
