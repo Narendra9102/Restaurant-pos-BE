@@ -113,16 +113,21 @@ python manage.py migrate
 
 ### 7️. Seed Sample Data
 
-To create tables, and menu items:
+A simple seed file is provided to populate:
+- Restaurant tables
+- Menu items
 
-```bash
+Location:
+- seed_data.py (project root)
+
+Run:
 python manage.py shell
->>> exec(open("restaurant/seed_data.py").read())
-```
+>>> exec(open("seed_data.py").read())
 
-This will create:
-
-* Tables + Menu inserted into their database
+Note:
+User accounts are NOT seeded.
+Admin must create Manager, Waiter, and Cashier users manually.
+This follows real-world security best practices.
 
 ---
 
